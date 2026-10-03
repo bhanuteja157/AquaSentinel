@@ -1,0 +1,31 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# FastAPI generated/runtime files
+backend/uploads/
+backend/outputs/
+backend/__pycache__/
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# VS Code
+.vscode/
+
+# Generated AI outputs
+ai/outputs/
+
+# OS files
+Thumbs.db
+.DS_Store

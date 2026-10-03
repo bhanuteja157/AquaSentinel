@@ -1,0 +1,1784 @@
+"use client";
+
+
+
+import { ChangeEvent, useEffect, useState } from "react";
+
+import dynamic from "next/dynamic";
+
+
+
+const MissionMap = dynamic(
+
+  () => import("../components/MissionMap"),
+
+  {
+
+    ssr: false,
+
+  }
+
+);
+
+
+
+const API_URL = "http://127.0.0.1:8000";
+
+
+
+type VerificationStatus = "NEEDS REVIEW" | "CONFIRMED" | "REJECTED";
+
+
+
+type Detection = {
+
+  class: string;
+
+  confidence: number;
+
+  bbox: number[];
+
+};
+
+
+
+type VerifiedDetection = Detection & {
+
+  verification: VerificationStatus;
+
+};
+
+
+
+type AnalysisResult = {
+
+  filename: string;
+
+  detections: Detection[];
+
+  detection_count: number;
+
+  annotated_image: string;
+
+  device: string;
+
+};
+
+
+
+export default function Home() {
+
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  const [previewUrl, setPreviewUrl] = useState<string>("");
+
+  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [missionHistory, setMissionHistory] = useState<any[]>([]);
+  useEffect(() => {
+  const savedHistory = localStorage.getItem("aquasentinel_mission_history");
+
+  if (savedHistory) {
+    try {
+      setMissionHistory(JSON.parse(savedHistory));
+    } catch {
+      localStorage.removeItem("aquasentinel_mission_history");
+    }
+  }
+}, []);
+
+  const [verifiedDetections, setVerifiedDetections] = useState<
+
+    VerifiedDetection[]
+
+  >([]);
+
+  const [loading, setLoading] = useState(false);
+
+  const [error, setError] = useState("");
+
+  const [reportLoading, setReportLoading] = useState(false);
+
+const [reportUrl, setReportUrl] = useState("");
+
+
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+
+    const file = event.target.files?.[0];
+
+
+
+    if (!file) {
+
+      return;
+
+    }
+
+
+
+    setSelectedFile(file);
+
+    setPreviewUrl(URL.createObjectURL(file));
+
+    setResult(null);
+
+    setVerifiedDetections([]);
+
+    setError("");
+
+  }
+
+
+
+  async function analyzeImage() {
+
+    if (!selectedFile) {
+
+      setError("Please select an SSS image first.");
+
+      return;
+
+    }
+
+
+
+    setLoading(true);
+
+    setError("");
+
+    setResult(null);
+
+    setVerifiedDetections([]);
+
+
+
+    const formData = new FormData();
+
+    formData.append("file", selectedFile);
+
+
+
+    try {
+
+      const response = await fetch(`${API_URL}/analyze`, {
+
+        method: "POST",
+
+        body: formData,
+
+      });
+
+
+
+      if (!response.ok) {
+
+        const errorData = await response.json().catch(() => null);
+
+
+
+        throw new Error(
+
+          errorData?.detail || `Server returned ${response.status}`
+
+        );
+
+      }
+
+
+
+      const data: AnalysisResult = await response.json();
+
+
+
+      setResult(data);
+      const historyItem = {
+  id: Date.now(),
+  filename: data.filename,
+  detectionCount: data.detection_count,
+  detections: data.detections,
+  timestamp: new Date().toLocaleString(),
+};
+
+setMissionHistory((prev) => [historyItem, ...prev].slice(0, 10));
+
+
+
+      const initialVerification: VerifiedDetection[] =
+
+        data.detections.map((detection) => ({
+
+          ...detection,
+
+          verification: "NEEDS REVIEW",
+
+        }));
+
+
+
+      setVerifiedDetections(initialVerification);
+
+    } catch (err) {
+
+      if (err instanceof Error) {
+
+        setError(err.message);
+
+      } else {
+
+        setError("Could not connect to AquaSentinel backend.");
+
+      }
+
+    } finally {
+
+      setLoading(false);
+
+    }
+
+  }
+
+
+
+  function updateVerification(
+
+    index: number,
+
+    status: VerificationStatus
+
+  ) {
+
+    setVerifiedDetections((current) =>
+
+      current.map((detection, detectionIndex) =>
+
+        detectionIndex === index
+
+          ? {
+
+              ...detection,
+
+              verification: status,
+
+            }
+
+          : detection
+
+      )
+
+    );
+
+  }
+
+
+
+  function formatClassName(name: string) {
+
+    return name
+
+      .replaceAll("_", " ")
+
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+  }
+
+
+
+  function getConfidenceColor(confidence: number) {
+
+    if (confidence >= 0.8) {
+
+      return "text-green-400";
+
+    }
+
+
+
+    if (confidence >= 0.5) {
+
+      return "text-yellow-400";
+
+    }
+
+
+
+    return "text-red-400";
+
+  }
+
+
+
+  function getRecoveryPriority(confidence: number) {
+
+    if (confidence >= 0.8) {
+
+      return {
+
+        label: "HIGH",
+
+        description:
+
+          "Strong AI detection — prioritize human assessment.",
+
+        style:
+
+          "border-red-500/30 bg-red-500/10 text-red-400",
+
+      };
+
+    }
+
+
+
+    if (confidence >= 0.5) {
+
+      return {
+
+        label: "MEDIUM",
+
+        description:
+
+          "Moderate AI confidence — human review recommended.",
+
+        style:
+
+          "border-yellow-500/30 bg-yellow-500/10 text-yellow-400",
+
+      };
+
+    }
+
+
+
+    return {
+
+      label: "LOW",
+
+      description:
+
+        "Low AI confidence — additional review recommended.",
+
+      style:
+
+        "border-slate-500/30 bg-slate-500/10 text-slate-400",
+
+    };
+
+  }
+
+
+
+  function getVerificationStyle(status: VerificationStatus) {
+
+    if (status === "CONFIRMED") {
+
+      return "border-green-500/30 bg-green-500/10 text-green-400";
+
+    }
+
+
+
+    if (status === "REJECTED") {
+
+      return "border-red-500/30 bg-red-500/10 text-red-400";
+
+    }
+
+
+
+    return "border-yellow-500/30 bg-yellow-500/10 text-yellow-400";
+
+  }
+
+
+
+  const confirmedCount = verifiedDetections.filter(
+
+    (detection) => detection.verification === "CONFIRMED"
+
+  ).length;
+
+
+
+  const rejectedCount = verifiedDetections.filter(
+
+    (detection) => detection.verification === "REJECTED"
+
+  ).length;
+
+
+
+  const reviewCount = verifiedDetections.filter(
+
+    (detection) => detection.verification === "NEEDS REVIEW"
+
+  ).length;
+
+
+
+  
+  async function generateReport() {
+    if (!result) {
+      setError("Run AI detection before generating a report.");
+      return;
+    }
+
+    setReportLoading(true);
+    setError("");
+    setReportUrl("");
+
+    try {
+      const response = await fetch(`${API_URL}/generate-report`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          filename: result.filename,
+          detections: result.detections,
+          detection_count: result.detection_count,
+          device: result.device,
+          confirmed_count: confirmedCount,
+          rejected_count: rejectedCount,
+          review_count: reviewCount,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+
+        throw new Error(
+          errorData?.detail ||
+            `Report generation failed: ${response.status}`
+        );
+      }
+
+      const data = await response.json();
+
+      setReportUrl(`${API_URL}${data.report}`);
+    } catch (err) {
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError("Could not generate the PDF report.");
+      }
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
+return (
+
+    <main className="min-h-screen bg-slate-950 text-white">
+
+
+
+      {/* Header */}
+
+      <header className="border-b border-slate-800 bg-slate-900/80">
+
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
+
+
+
+          <div>
+
+            <h1 className="text-2xl font-bold tracking-tight">
+
+              Aqua<span className="text-cyan-400">Sentinel</span>
+
+            </h1>
+
+
+
+            <p className="mt-1 text-sm text-slate-400">
+
+              AI-Powered Underwater Marine Debris & Anomaly Detection
+
+            </p>
+
+          </div>
+
+
+
+          <div className="flex items-center gap-2 rounded-full border border-green-500/30 bg-green-500/10 px-4 py-2 text-sm text-green-400">
+
+            <span className="h-2 w-2 rounded-full bg-green-400" />
+
+            AI System Online
+
+          </div>
+
+
+
+        </div>
+
+      </header>
+
+
+
+      <div className="mx-auto max-w-7xl px-6 py-8">
+
+
+
+        {/* Title */}
+
+        <section className="mb-8">
+
+
+
+          <h2 className="text-3xl font-bold">
+
+            Side-Scan Sonar Analysis
+
+          </h2>
+
+
+
+          <p className="mt-2 max-w-3xl text-slate-400">
+
+            Upload a Side-Scan Sonar image and let the AquaSentinel AI
+
+            pipeline identify underwater anomalies.
+
+          </p>
+
+
+
+        </section>
+
+
+
+        {/* Upload + Preview */}
+        {/* AI Model Information */}
+<section className="mb-8 rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+
+  <div className="mb-5 flex items-center justify-between">
+    <div>
+      <h3 className="text-lg font-semibold">
+        AI Detection Engine
+      </h3>
+
+      <p className="mt-1 text-sm text-slate-500">
+        Real computer-vision model used for Side-Scan Sonar analysis.
+      </p>
+    </div>
+
+    <div className="rounded-full border border-green-500/30 bg-green-500/10 px-3 py-1 text-xs font-semibold text-green-400">
+      MODEL READY
+    </div>
+  </div>
+
+  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+      <p className="text-xs text-slate-500">
+        MODEL
+      </p>
+      <p className="mt-2 font-semibold text-slate-200">
+        YOLOv8s
+      </p>
+      <p className="mt-1 text-xs text-slate-500">
+        DRISHTI SSS Detector
+      </p>
+    </div>
+
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+      <p className="text-xs text-slate-500">
+        TASK
+      </p>
+      <p className="mt-2 font-semibold text-slate-200">
+        Object Detection
+      </p>
+      <p className="mt-1 text-xs text-slate-500">
+        Bounding boxes + confidence
+      </p>
+    </div>
+
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+      <p className="text-xs text-slate-500">
+        INPUT
+      </p>
+      <p className="mt-2 font-semibold text-slate-200">
+        Side-Scan Sonar
+      </p>
+      <p className="mt-1 text-xs text-slate-500">
+        Acoustic imagery
+      </p>
+    </div>
+
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+      <p className="text-xs text-slate-500">
+        INFERENCE
+      </p>
+      <p className="mt-2 font-semibold text-cyan-400">
+        NVIDIA RTX 2050
+      </p>
+      <p className="mt-1 text-xs text-slate-500">
+        CUDA acceleration
+      </p>
+    </div>
+
+  </div>
+
+  <div className="mt-5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+
+    <p className="text-xs leading-5 text-slate-400">
+      <span className="font-semibold text-cyan-400">
+        Detection classes:
+      </span>{" "}
+      Submarine Pipeline, Shipwreck, Ghost Net and Mine Cylinder.
+    </p>
+
+    <p className="mt-2 text-xs leading-5 text-slate-500">
+      The displayed detections come from the published upstream
+      DRISHTI detector. AquaSentinel does not claim independent
+      validation of the upstream model's reported performance.
+    </p>
+
+  </div>
+
+</section>
+
+        <section className="grid gap-6 lg:grid-cols-2">
+
+
+
+          {/* Upload */}
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+
+
+
+            <h3 className="mb-4 text-lg font-semibold">
+
+              01. Upload Sonar Image
+
+            </h3>
+
+
+
+            <label
+
+              htmlFor="sonar-upload"
+
+              className="flex min-h-64 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-700 bg-slate-950/60 p-6 text-center transition hover:border-cyan-500 hover:bg-slate-900"
+
+            >
+
+
+
+              <div className="mb-4 text-5xl">
+
+                🌊
+
+              </div>
+
+
+
+              <p className="font-medium text-slate-200">
+
+                Click to select an SSS image
+
+              </p>
+
+
+
+              <p className="mt-2 text-sm text-slate-500">
+
+                JPG, JPEG, PNG, BMP, TIF or TIFF
+
+              </p>
+
+
+
+              {selectedFile && (
+
+                <div className="mt-4 rounded-lg bg-cyan-500/10 px-4 py-2 text-sm text-cyan-300">
+
+                  {selectedFile.name}
+
+                </div>
+
+              )}
+
+
+
+              <input
+
+                id="sonar-upload"
+
+                type="file"
+
+                accept=".jpg,.jpeg,.png,.bmp,.tif,.tiff"
+
+                className="hidden"
+
+                onChange={handleFileChange}
+
+              />
+
+
+
+            </label>
+
+
+
+            <button
+
+              onClick={analyzeImage}
+
+              disabled={!selectedFile || loading}
+
+              className="mt-5 w-full rounded-xl bg-cyan-500 px-5 py-3 font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500"
+
+            >
+
+              {loading
+
+                ? "Analyzing Sonar..."
+
+                : "Run AI Detection"}
+
+            </button>
+
+
+
+            {loading && (
+
+              <div className="mt-4 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-4 text-center text-sm text-cyan-300">
+
+                YOLO AI model is analyzing the image using the GPU...
+
+              </div>
+
+            )}
+
+
+
+            {error && (
+
+              <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+
+                <strong>Error:</strong> {error}
+
+              </div>
+
+            )}
+
+
+
+          </div>
+
+
+
+          {/* Original image */}
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+
+
+
+            <h3 className="mb-4 text-lg font-semibold">
+
+              02. Input Sonar
+
+            </h3>
+
+
+
+            <div className="flex min-h-64 items-center justify-center overflow-hidden rounded-xl bg-black">
+
+
+
+              {previewUrl ? (
+
+                <img
+
+                  src={previewUrl}
+
+                  alt="Uploaded side-scan sonar"
+
+                  className="max-h-[500px] w-full object-contain"
+
+                />
+
+              ) : (
+
+                <div className="text-center text-slate-600">
+
+
+
+                  <div className="text-5xl">
+
+                    📡
+
+                  </div>
+
+
+
+                  <p className="mt-3">
+
+                    No sonar image selected
+
+                  </p>
+
+
+
+                </div>
+
+              )}
+
+
+
+            </div>
+
+
+
+          </div>
+
+
+
+        </section>
+
+
+
+        {/* Results */}
+
+        {result && (
+
+
+
+          <section className="mt-8">
+
+
+
+            {/* Results heading */}
+
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+
+
+
+              <div>
+
+
+
+                <h2 className="text-2xl font-bold">
+
+                  AI Detection Results
+
+                </h2>
+
+
+
+                <p className="mt-1 text-sm text-slate-400">
+
+                  Analysis completed for {result.filename}
+
+                </p>
+
+
+
+              </div>
+
+
+
+              <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-5 py-3 text-center">
+
+
+
+                <div className="text-2xl font-bold text-cyan-400">
+
+                  {result.detection_count}
+
+                </div>
+
+
+
+                <div className="text-xs text-slate-400">
+
+                  Total Detection
+
+                  {result.detection_count !== 1
+
+                    ? "s"
+
+                    : ""}
+
+                </div>
+
+
+
+              </div>
+
+
+
+            </div>
+
+
+
+            {/* Main results */}
+
+            <div className="grid gap-6 lg:grid-cols-2">
+
+
+
+              {/* Annotated image */}
+
+              <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+
+
+
+                <h3 className="mb-4 text-lg font-semibold">
+
+                  03. AI Annotated Sonar
+
+                </h3>
+
+
+
+                <div className="overflow-hidden rounded-xl bg-black">
+
+
+
+                  <img
+
+                    src={`${API_URL}${result.annotated_image}`}
+
+                    alt="AI annotated sonar"
+
+                    className="w-full object-contain"
+
+                  />
+                  <div className="mt-4">
+  <a
+    href={`${API_URL}/download-output/${result.annotated_image.split("/").pop()}`}
+    download
+    className="inline-flex w-full items-center justify-center rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-5 py-3 text-sm font-semibold text-cyan-400 transition hover:bg-cyan-500/20"
+  >
+    ↓ Download Annotated Sonar
+  </a>
+</div>
+
+
+
+                </div>
+
+
+
+                <div className="mt-4 flex items-center justify-between text-sm">
+
+
+
+                  <span className="text-slate-500">
+
+                    Inference device
+
+                  </span>
+
+
+
+                  <span className="text-cyan-400">
+
+                    {result.device}
+
+                  </span>
+
+
+
+                </div>
+
+
+
+              </div>
+
+
+
+              {/* Detection list */}
+
+              <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+
+
+
+                <h3 className="mb-4 text-lg font-semibold">
+
+                  04. Detected Anomalies
+
+                </h3>
+
+
+
+                {verifiedDetections.length === 0 ? (
+
+
+
+                  <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-6 text-center">
+
+
+
+                    <div className="text-4xl">
+
+                      ✓
+
+                    </div>
+
+
+
+                    <p className="mt-3 font-semibold text-green-400">
+
+                      No anomalies detected
+
+                    </p>
+
+
+
+                    <p className="mt-1 text-sm text-slate-500">
+
+                      The AI model did not identify any target objects.
+
+                    </p>
+
+
+
+                  </div>
+
+
+
+                ) : (
+
+
+
+                  <div className="space-y-4">
+
+
+
+                    {verifiedDetections.map(
+
+                      (detection, index) => (
+
+
+
+                        <div
+
+                          key={`${detection.class}-${index}`}
+
+                          className="rounded-xl border border-slate-700 bg-slate-950 p-4"
+
+                        >
+
+
+
+                          {/* Detection header */}
+
+                          <div className="flex items-start justify-between gap-4">
+
+
+
+                            <div>
+
+
+
+                              <p className="font-semibold text-slate-100">
+
+                                {formatClassName(
+
+                                  detection.class
+
+                                )}
+
+                              </p>
+
+
+
+                              <p className="mt-1 text-xs text-slate-500">
+
+                                Detection #{index + 1}
+
+                              </p>
+
+
+
+                            </div>
+
+
+
+                            <div
+
+                              className={`text-lg font-bold ${getConfidenceColor(
+
+                                detection.confidence
+
+                              )}`}
+
+                            >
+
+                              {(detection.confidence * 100).toFixed(1)}%
+
+                            </div>
+
+
+
+                          </div>
+
+
+
+                          {/* Confidence */}
+
+                          <div className="mt-3">
+
+
+
+                            <div className="mb-1 flex justify-between text-xs text-slate-500">
+
+
+
+                              <span>
+
+                                AI Confidence
+
+                              </span>
+
+
+
+                              <span>
+
+                                {(detection.confidence * 100).toFixed(1)}%
+
+                              </span>
+
+
+
+                            </div>
+
+
+
+                            <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+
+
+
+                              <div
+
+                                className="h-full rounded-full bg-cyan-400"
+
+                                style={{
+
+                                  width: `${Math.min(
+
+                                    detection.confidence * 100,
+
+                                    100
+
+                                  )}%`,
+
+                                }}
+
+                              />
+
+
+
+                            </div>
+
+
+
+                          </div>
+
+
+
+                          {/* Bounding box */}
+
+                          <div className="mt-3 text-xs text-slate-500">
+
+
+
+                            Bounding box: [
+
+                            {detection.bbox
+
+                              .map((value) =>
+
+                                value.toFixed(1)
+
+                              )
+
+                              .join(", ")}
+
+                            ]
+
+
+
+                          </div>
+
+
+
+                          {/* Recovery Priority */}
+
+                          {(() => {
+
+
+
+                            const priority =
+
+                              getRecoveryPriority(
+
+                                detection.confidence
+
+                              );
+
+
+
+                            return (
+
+
+
+                              <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/70 p-3">
+
+
+
+                                <div className="flex items-center justify-between gap-3">
+
+
+
+                                  <span className="text-xs font-medium text-slate-400">
+
+                                    Prototype Recovery Priority
+
+                                  </span>
+
+
+
+                                  <span
+
+                                    className={`rounded-full border px-3 py-1 text-xs font-bold ${priority.style}`}
+
+                                  >
+
+                                    {priority.label}
+
+                                  </span>
+
+
+
+                                </div>
+
+
+
+                                <p className="mt-2 text-xs text-slate-500">
+
+                                  {priority.description}
+
+                                </p>
+
+
+
+                              </div>
+
+
+
+                            );
+
+
+
+                          })()}
+
+
+
+                          {/* Verification status */}
+
+                          <div className="mt-4">
+
+
+
+                            <div className="mb-2 flex items-center justify-between">
+
+
+
+                              <span className="text-xs font-medium text-slate-400">
+
+                                Human Verification
+
+                              </span>
+
+
+
+                              <span
+
+                                className={`rounded-full border px-3 py-1 text-xs font-semibold ${getVerificationStyle(
+
+                                  detection.verification
+
+                                )}`}
+
+                              >
+
+                                {detection.verification}
+
+                              </span>
+
+
+
+                            </div>
+
+
+
+                            {/* Verification buttons */}
+
+                            <div className="grid grid-cols-3 gap-2">
+
+
+
+                              <button
+
+                                onClick={() =>
+
+                                  updateVerification(
+
+                                    index,
+
+                                    "CONFIRMED"
+
+                                  )
+
+                                }
+
+                                className="rounded-lg border border-green-500/30 bg-green-500/10 px-2 py-2 text-xs font-semibold text-green-400 transition hover:bg-green-500/20"
+
+                              >
+
+                                ✓ Confirm
+
+                              </button>
+
+
+
+                              <button
+
+                                onClick={() =>
+
+                                  updateVerification(
+
+                                    index,
+
+                                    "REJECTED"
+
+                                  )
+
+                                }
+
+                                className="rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-2 text-xs font-semibold text-red-400 transition hover:bg-red-500/20"
+
+                              >
+
+                                ✕ Reject
+
+                              </button>
+
+
+
+                              <button
+
+                                onClick={() =>
+
+                                  updateVerification(
+
+                                    index,
+
+                                    "NEEDS REVIEW"
+
+                                  )
+
+                                }
+
+                                className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-2 py-2 text-xs font-semibold text-yellow-400 transition hover:bg-yellow-500/20"
+
+                              >
+
+                                ? Review
+
+                              </button>
+
+
+
+                            </div>
+
+
+
+                          </div>
+
+
+
+                        </div>
+
+
+
+                      )
+
+                    )}
+
+
+
+                  </div>
+
+
+
+                )}
+
+
+
+              </div>
+
+
+
+            </div>
+
+
+
+            {/* Verification summary */}
+
+            {verifiedDetections.length > 0 && (
+
+
+
+              <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+
+
+
+                <h3 className="mb-4 text-lg font-semibold">
+
+                  Verification Summary
+
+                </h3>
+
+
+
+                <div className="grid gap-4 sm:grid-cols-3">
+
+
+
+                  {/* Confirmed */}
+
+                  <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-4">
+
+
+
+                    <div className="text-2xl font-bold text-green-400">
+
+                      {confirmedCount}
+
+                    </div>
+
+
+
+                    <div className="text-sm text-slate-400">
+
+                      Confirmed
+
+                    </div>
+
+
+
+                  </div>
+
+
+
+                  {/* Rejected */}
+
+                  <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
+
+
+
+                    <div className="text-2xl font-bold text-red-400">
+
+                      {rejectedCount}
+
+                    </div>
+
+
+
+                    <div className="text-sm text-slate-400">
+
+                      Rejected
+
+                    </div>
+
+
+
+                  </div>
+
+
+
+                  {/* Needs review */}
+
+                  <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-4">
+
+
+
+                    <div className="text-2xl font-bold text-yellow-400">
+
+                      {reviewCount}
+
+                    </div>
+
+
+
+                    <div className="text-sm text-slate-400">
+
+                      Needs Review
+
+                    </div>
+
+
+
+                  </div>
+
+
+
+                </div>
+
+
+
+                {/* Priority note */}
+
+                <div className="mt-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+
+
+
+                  <p className="text-xs leading-5 text-slate-400">
+
+
+
+                    <span className="font-semibold text-cyan-400">
+
+                      Priority note:
+
+                    </span>{" "}
+
+
+
+                    Recovery priority is a prototype decision-support
+
+                    indicator derived from AI detection confidence. It is
+
+                    not an official ecological-risk assessment.
+
+
+
+                  </p>
+
+
+
+                </div>
+
+
+
+              </div>
+
+
+
+            )}
+            {/* Mission History */}
+<div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+  <div className="mb-4">
+    <h3 className="text-lg font-semibold">
+      05. Mission History
+    </h3>
+
+    <p className="mt-1 text-sm text-slate-500">
+      Recent Side-Scan Sonar analyses from this session.
+    </p>
+  </div>
+
+  {missionHistory.length === 0 ? (
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-500">
+      No previous missions yet. Analyze a sonar image to create a mission record.
+    </div>
+  ) : (
+    <div className="space-y-3">
+      {missionHistory.map((mission) => (
+        <div
+          key={mission.id}
+          className="rounded-xl border border-slate-800 bg-slate-950 p-4"
+        >
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-medium text-white">
+                {mission.filename}
+              </p>
+
+              <p className="text-xs text-slate-500">
+                {mission.timestamp}
+              </p>
+            </div>
+
+            <span className="w-fit rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-400">
+              {mission.detectionCount} detection
+              {mission.detectionCount !== 1 ? "s" : ""}
+            </span>
+          </div>
+
+          {mission.detections?.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {mission.detections.map(
+                (detection: any, index: number) => (
+                  <span
+                    key={index}
+                    className="rounded-lg bg-slate-800 px-3 py-1 text-xs text-slate-300"
+                  >
+                    {formatClassName(detection.class)} •{" "}
+                    {(detection.confidence * 100).toFixed(1)}%
+                  </span>
+                )
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )}
+</div>
+
+
+
+            {/* Mission Location */}
+
+
+            <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+
+
+
+              <div className="mb-4">
+
+
+
+                <h3 className="text-lg font-semibold">
+
+                  06. Mission Location
+
+                </h3>
+
+
+
+                <p className="mt-1 text-sm text-slate-500">
+
+                  Simulated mission location for prototype demonstration.
+
+                  Actual coordinates should come from mission/sonar metadata.
+
+                </p>
+
+
+
+              </div>
+
+
+
+              <MissionMap
+
+                detectionName={
+
+                  verifiedDetections[0]
+
+                    ? formatClassName(
+
+                        verifiedDetections[0].class
+
+                      )
+
+                    : "Detected Anomaly"
+
+                }
+
+                confidence={
+
+                  verifiedDetections[0]?.confidence ?? 0
+
+                }
+
+                priority={
+
+                  verifiedDetections[0]
+
+                    ? getRecoveryPriority(
+
+                        verifiedDetections[0].confidence
+
+                      ).label
+
+                    : "MEDIUM"
+
+                }
+
+              />
+
+              <div className="mt-6 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h4 className="font-semibold text-slate-200">
+                      Mission Analysis Report
+                    </h4>
+
+                    <p className="mt-1 text-sm text-slate-500">
+                      Generate a PDF report containing the AI detection
+                      results, verification status and mission information.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={generateReport}
+                    disabled={reportLoading}
+                    className="rounded-xl bg-cyan-500 px-5 py-3 font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500"
+                  >
+                    {reportLoading
+                      ? "Generating Report..."
+                      : "Generate PDF Report"}
+                  </button>
+                </div>
+
+                {reportUrl && (
+                  <div className="mt-4 rounded-lg border border-green-500/20 bg-green-500/5 p-4">
+                    <p className="text-sm text-green-400">
+                      ✓ Report generated successfully.
+                    </p>
+
+                    <a
+                      href={reportUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-block text-sm font-semibold text-cyan-400 hover:text-cyan-300"
+                    >
+                      Open PDF Report →
+                    </a>
+                  </div>
+                )}
+              </div>
+
+
+
+            </div>
+
+
+
+          </section>
+
+
+
+        )}
+
+
+
+      </div>
+
+
+
+      {/* Footer */}
+
+      <footer className="mt-12 border-t border-slate-800 py-6 text-center text-sm text-slate-600">
+
+        AquaSentinel • AI Marine Anomaly Detection Prototype
+
+      </footer>
+
+
+
+    </main>
+
+  );
+
+}
