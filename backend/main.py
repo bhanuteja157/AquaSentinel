@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from backend.services.ai_service import AIService
+from backend.services.ingestion_service import IngestionService
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -98,6 +99,8 @@ if not MODEL_PATH.exists():
 
 ai_service = AIService(MODEL_PATH)
 
+ingestion_service = IngestionService()
+
 print("AI service loaded successfully.")
 
 
@@ -113,6 +116,7 @@ class ReportRequest(BaseModel):
     confirmed_count: int
     rejected_count: int
     review_count: int
+
     mission_latitude: float = 13.3457
     mission_longitude: float = 77.1012
 
@@ -140,10 +144,14 @@ def root():
 
 @app.get("/health")
 def health():
+
+    model_info = ai_service.get_info()
+
     return {
         "status": "healthy",
-        "model_loaded": True,
+        "model_loaded": ai_service is not None,
         "cuda_available": torch.cuda.is_available(),
+        "model": model_info,
     }
 
 
@@ -155,6 +163,7 @@ def health():
 def get_output_image(filename: str):
 
     safe_filename = Path(filename).name
+
     image_path = DETECTION_DIR / safe_filename
 
     if not image_path.exists():
@@ -174,6 +183,7 @@ def get_output_image(filename: str):
 def download_output_image(filename: str):
 
     safe_filename = Path(filename).name
+
     image_path = DETECTION_DIR / safe_filename
 
     if not image_path.exists():
@@ -197,6 +207,14 @@ def download_output_image(filename: str):
 async def analyze(file: UploadFile = File(...)):
 
     # --------------------------------------------------------
+    # Original filename
+    # --------------------------------------------------------
+
+    original_name = file.filename or "uploaded_image"
+
+    extension = Path(original_name).suffix.lower()
+
+    # --------------------------------------------------------
     # Allowed image formats
     # --------------------------------------------------------
 
@@ -208,14 +226,6 @@ async def analyze(file: UploadFile = File(...)):
         ".tif",
         ".tiff",
     }
-
-    # --------------------------------------------------------
-    # Original filename
-    # --------------------------------------------------------
-
-    original_name = file.filename or "uploaded_image"
-
-    extension = Path(original_name).suffix.lower()
 
     if extension not in allowed_extensions:
         raise HTTPException(
@@ -230,9 +240,11 @@ async def analyze(file: UploadFile = File(...)):
     file_id = uuid.uuid4().hex
 
     input_filename = f"{file_id}{extension}"
+
     input_path = UPLOAD_DIR / input_filename
 
     annotated_filename = f"{file_id}.jpg"
+
     annotated_path = DETECTION_DIR / annotated_filename
 
     # --------------------------------------------------------
@@ -242,9 +254,30 @@ async def analyze(file: UploadFile = File(...)):
     try:
 
         with input_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            shutil.copyfileobj(
+                file.file,
+                buffer,
+            )
+
+        # Validate and register the ingested SSS file
+        ingestion = ingestion_service.ingest(
+            input_path
+        )
+
+    except (FileNotFoundError, ValueError) as error:
+
+        if input_path.exists():
+            input_path.unlink()
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        )
 
     except Exception as error:
+
+        if input_path.exists():
+            input_path.unlink()
 
         raise HTTPException(
             status_code=500,
@@ -278,6 +311,8 @@ async def analyze(file: UploadFile = File(...)):
 
     return {
         "filename": original_name,
+        "file_type": ingestion.file_type,
+        "metadata_status": ingestion.metadata_status,
         "detections": detections,
         "detection_count": len(detections),
         "annotated_image": f"/outputs/{annotated_filename}",
@@ -631,6 +666,7 @@ def generate_report(request: ReportRequest):
 def get_report(filename: str):
 
     safe_filename = Path(filename).name
+
     report_path = REPORT_DIR / safe_filename
 
     if not report_path.exists():
