@@ -5,23 +5,11 @@ from ultralytics import YOLO
 
 
 class AIService:
-    """
-    AquaSentinel AI inference service.
-
-    Responsible for:
-    - Loading the YOLO model
-    - Running inference
-    - Extracting detections
-    - Saving annotated images
-    """
-
     def __init__(self, model_path: Path):
         self.model_path = model_path
 
         self.device = (
-            0
-            if torch.cuda.is_available()
-            else "cpu"
+            0 if torch.cuda.is_available() else "cpu"
         )
 
         self.device_name = (
@@ -43,6 +31,21 @@ class AIService:
 
         print("YOLO model loaded successfully.")
 
+    def get_info(self) -> dict:
+        """
+        Return information about the loaded AI model
+        and the inference configuration.
+        """
+
+        return {
+            "model_path": str(self.model_path),
+            "task": self.model.task,
+            "input_size": 640,
+            "confidence_threshold": 0.10,
+            "device": self.device_name,
+            "classes": self.model.names,
+        }
+
     def analyze(
         self,
         input_path: Path,
@@ -59,7 +62,6 @@ class AIService:
 
         result = results[0]
 
-        # Save annotated image
         result.save(
             filename=str(annotated_path)
         )
@@ -67,11 +69,9 @@ class AIService:
         detections = []
 
         if result.boxes is not None:
-
             for box in result.boxes:
 
                 class_id = int(box.cls[0])
-
                 confidence = float(box.conf[0])
 
                 coordinates = box.xyxy[0].tolist()
@@ -79,29 +79,15 @@ class AIService:
                 detections.append(
                     {
                         "class": result.names[class_id],
-
                         "confidence": round(
                             confidence,
-                            4
+                            4,
                         ),
-
                         "bbox": [
-                            round(
-                                float(coordinates[0]),
-                                2
-                            ),
-                            round(
-                                float(coordinates[1]),
-                                2
-                            ),
-                            round(
-                                float(coordinates[2]),
-                                2
-                            ),
-                            round(
-                                float(coordinates[3]),
-                                2
-                            ),
+                            round(float(coordinates[0]), 2),
+                            round(float(coordinates[1]), 2),
+                            round(float(coordinates[2]), 2),
+                            round(float(coordinates[3]), 2),
                         ],
                     }
                 )
