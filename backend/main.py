@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from backend.services.ai_service import AIService
 from backend.services.ingestion_service import IngestionService
+from backend.services.feedback_service import FeedbackService
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -40,6 +41,8 @@ OUTPUT_DIR = BASE_DIR / "backend" / "outputs"
 DETECTION_DIR = OUTPUT_DIR / "detections"
 
 REPORT_DIR = OUTPUT_DIR / "reports"
+FEEDBACK_DIR = OUTPUT_DIR / "feedback"
+FEEDBACK_FILE = FEEDBACK_DIR / "feedback_records.json"
 
 
 # ============================================================
@@ -50,6 +53,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 DETECTION_DIR.mkdir(parents=True, exist_ok=True)
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
+FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================
@@ -101,14 +105,47 @@ ai_service = AIService(MODEL_PATH)
 
 ingestion_service = IngestionService()
 
+feedback_service = FeedbackService(FEEDBACK_FILE)
+
 print("AI service loaded successfully.")
 
 
-# ============================================================
-# REPORT DATA MODEL
+## ============================================================
+# REQUEST DATA MODELS
 # ============================================================
 
+class FeedbackRequest(BaseModel):
+    detection_index: int
+    ai_class: str
+    ai_confidence: float
+    human_decision: str
+    corrected_class: str | None = None
+    timestamp: str
+
+
 class ReportRequest(BaseModel):
+    detection_index: int
+    ai_class: str
+    ai_confidence: float
+    human_decision: str
+    corrected_class: str | None = None
+    timestamp: str
+    filename: str
+    detections: list[dict]
+    detection_count: int
+    device: str
+    confirmed_count: int
+    rejected_count: int
+    review_count: int
+
+    mission_latitude: float = 13.3457
+    mission_longitude: float = 77.1012
+    detection_index: int
+    ai_class: str
+    ai_confidence: float
+    human_decision: str
+    corrected_class: str | None = None
+    timestamp: str
     filename: str
     detections: list[dict]
     detection_count: int
@@ -681,3 +718,21 @@ def get_report(filename: str):
         media_type="application/pdf",
         filename=safe_filename,
     )
+@app.post("/feedback")
+def save_feedback(feedback: FeedbackRequest):
+    record = {
+        "detectionIndex": feedback.detection_index,
+        "aiClass": feedback.ai_class,
+        "aiConfidence": feedback.ai_confidence,
+        "humanDecision": feedback.human_decision,
+        "correctedClass": feedback.corrected_class,
+        "timestamp": feedback.timestamp,
+    }
+
+    saved_record = feedback_service.save(record)
+
+    return {
+        "status": "success",
+        "message": "Human feedback recorded successfully.",
+        "record": saved_record,
+    }
