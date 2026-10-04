@@ -3,10 +3,15 @@ import shutil
 import uuid
 
 import torch
+
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+
 from pydantic import BaseModel
+
+from backend.services.ai_service import AIService
+
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import (
@@ -17,7 +22,6 @@ from reportlab.platypus import (
     TableStyle,
 )
 from reportlab.lib import colors
-from ultralytics import YOLO
 
 
 # ============================================================
@@ -37,17 +41,14 @@ DETECTION_DIR = OUTPUT_DIR / "detections"
 REPORT_DIR = OUTPUT_DIR / "reports"
 
 
+# ============================================================
+# CREATE DIRECTORIES
+# ============================================================
+
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 DETECTION_DIR.mkdir(parents=True, exist_ok=True)
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
-
-
-# ============================================================
-# DEVICE
-# ============================================================
-
-DEVICE = 0 if torch.cuda.is_available() else "cpu"
 
 
 # ============================================================
@@ -61,6 +62,10 @@ app = FastAPI(
 )
 
 
+# ============================================================
+# CORS
+# ============================================================
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -71,7 +76,7 @@ app.add_middleware(
 
 
 # ============================================================
-# STARTUP
+# AI SERVICE
 # ============================================================
 
 print("=" * 60)
@@ -84,16 +89,16 @@ print(f"CUDA       : {torch.cuda.is_available()}")
 if torch.cuda.is_available():
     print(f"GPU        : {torch.cuda.get_device_name(0)}")
 
-print("\nLoading YOLO model...")
+print("\nLoading YOLO AI service...")
 
 if not MODEL_PATH.exists():
     raise FileNotFoundError(
         f"Model not found: {MODEL_PATH}"
     )
 
-model = YOLO(str(MODEL_PATH))
+ai_service = AIService(MODEL_PATH)
 
-print("YOLO model loaded successfully.")
+print("AI service loaded successfully.")
 
 
 # ============================================================
@@ -143,36 +148,44 @@ def health():
 
 
 # ============================================================
-# ANNOTATED IMAGE
+# GET ANNOTATED IMAGE
 # ============================================================
 
 @app.get("/outputs/{filename}")
 def get_output_image(filename: str):
 
-    image_path = DETECTION_DIR / filename
+    safe_filename = Path(filename).name
+    image_path = DETECTION_DIR / safe_filename
 
     if not image_path.exists():
         raise HTTPException(
             status_code=404,
-            detail="Annotated image not found."
+            detail="Annotated image not found.",
         )
 
     return FileResponse(image_path)
+
+
+# ============================================================
+# DOWNLOAD ANNOTATED IMAGE
+# ============================================================
+
 @app.get("/download-output/{filename}")
 def download_output_image(filename: str):
 
-    image_path = DETECTION_DIR / filename
+    safe_filename = Path(filename).name
+    image_path = DETECTION_DIR / safe_filename
 
     if not image_path.exists():
         raise HTTPException(
             status_code=404,
-            detail="Annotated image not found."
+            detail="Annotated image not found.",
         )
 
     return FileResponse(
         image_path,
         media_type="image/jpeg",
-        filename=f"aquasentinel_annotated_{filename}",
+        filename=f"aquasentinel_annotated_{safe_filename}",
     )
 
 
@@ -183,6 +196,10 @@ def download_output_image(filename: str):
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
 
+    # --------------------------------------------------------
+    # Allowed image formats
+    # --------------------------------------------------------
+
     allowed_extensions = {
         ".jpg",
         ".jpeg",
@@ -192,6 +209,10 @@ async def analyze(file: UploadFile = File(...)):
         ".tiff",
     }
 
+    # --------------------------------------------------------
+    # Original filename
+    # --------------------------------------------------------
+
     original_name = file.filename or "uploaded_image"
 
     extension = Path(original_name).suffix.lower()
@@ -199,21 +220,23 @@ async def analyze(file: UploadFile = File(...)):
     if extension not in allowed_extensions:
         raise HTTPException(
             status_code=400,
-            detail="Unsupported image format."
+            detail="Unsupported image format.",
         )
+
+    # --------------------------------------------------------
+    # Generate unique filenames
+    # --------------------------------------------------------
 
     file_id = uuid.uuid4().hex
 
     input_filename = f"{file_id}{extension}"
-
     input_path = UPLOAD_DIR / input_filename
 
     annotated_filename = f"{file_id}.jpg"
-
     annotated_path = DETECTION_DIR / annotated_filename
 
     # --------------------------------------------------------
-    # Save uploaded file
+    # Save uploaded image
     # --------------------------------------------------------
 
     try:
@@ -225,21 +248,18 @@ async def analyze(file: UploadFile = File(...)):
 
         raise HTTPException(
             status_code=500,
-            detail=f"Could not save uploaded image: {error}"
+            detail=f"Could not save uploaded image: {error}",
         )
 
     # --------------------------------------------------------
-    # YOLO inference
+    # AI inference
     # --------------------------------------------------------
 
     try:
 
-        results = model.predict(
-            source=str(input_path),
-            imgsz=640,
-            conf=0.10,
-            device=DEVICE,
-            verbose=False,
+        detections = ai_service.analyze(
+            input_path=input_path,
+            annotated_path=annotated_path,
         )
 
     except Exception as error:
@@ -249,71 +269,8 @@ async def analyze(file: UploadFile = File(...)):
 
         raise HTTPException(
             status_code=500,
-            detail=f"AI inference failed: {error}"
+            detail=f"AI inference failed: {error}",
         )
-
-    result = results[0]
-
-    # --------------------------------------------------------
-    # Save annotated image
-    # --------------------------------------------------------
-
-    try:
-
-        result.save(
-            filename=str(annotated_path)
-        )
-
-    except Exception as error:
-
-        raise HTTPException(
-            status_code=500,
-            detail=f"Could not save annotated image: {error}"
-        )
-
-    # --------------------------------------------------------
-    # Extract detections
-    # --------------------------------------------------------
-
-    detections = []
-
-    if result.boxes is not None:
-
-        for box in result.boxes:
-
-            class_id = int(box.cls[0])
-
-            confidence = float(box.conf[0])
-
-            coordinates = box.xyxy[0].tolist()
-
-            detections.append(
-                {
-                    "class": result.names[class_id],
-                    "confidence": round(
-                        confidence,
-                        4
-                    ),
-                    "bbox": [
-                        round(
-                            float(coordinates[0]),
-                            2
-                        ),
-                        round(
-                            float(coordinates[1]),
-                            2
-                        ),
-                        round(
-                            float(coordinates[2]),
-                            2
-                        ),
-                        round(
-                            float(coordinates[3]),
-                            2
-                        ),
-                    ],
-                }
-            )
 
     # --------------------------------------------------------
     # Response
@@ -321,14 +278,9 @@ async def analyze(file: UploadFile = File(...)):
 
     return {
         "filename": original_name,
-
         "detections": detections,
-
         "detection_count": len(detections),
-
-        "annotated_image":
-            f"/outputs/{annotated_filename}",
-
+        "annotated_image": f"/outputs/{annotated_filename}",
         "device": (
             torch.cuda.get_device_name(0)
             if torch.cuda.is_available()
@@ -401,42 +353,34 @@ def generate_report(request: ReportRequest):
 
     mission_data = [
         ["Parameter", "Value"],
-
         [
             "Sonar Image",
             request.filename,
         ],
-
         [
             "Total Detections",
             str(request.detection_count),
         ],
-
         [
             "Inference Device",
             request.device,
         ],
-
         [
             "Confirmed",
             str(request.confirmed_count),
         ],
-
         [
             "Rejected",
             str(request.rejected_count),
         ],
-
         [
             "Needs Review",
             str(request.review_count),
         ],
-
         [
             "Mission Latitude",
             f"{request.mission_latitude:.6f}",
         ],
-
         [
             "Mission Longitude",
             f"{request.mission_longitude:.6f}",
@@ -522,26 +466,26 @@ def generate_report(request: ReportRequest):
 
         for index, detection in enumerate(
             request.detections,
-            start=1
+            start=1,
         ):
 
             detection_class = str(
                 detection.get(
                     "class",
-                    "Unknown"
+                    "Unknown",
                 )
             )
 
             confidence = float(
                 detection.get(
                     "confidence",
-                    0
+                    0,
                 )
             )
 
             bbox = detection.get(
                 "bbox",
-                []
+                [],
             )
 
             bbox_text = ", ".join(
@@ -554,7 +498,7 @@ def generate_report(request: ReportRequest):
                     str(index),
                     detection_class.replace(
                         "_",
-                        " "
+                        " ",
                     ).title(),
                     f"{confidence * 100:.1f}%",
                     bbox_text,
@@ -578,9 +522,7 @@ def generate_report(request: ReportRequest):
                         "BACKGROUND",
                         (0, 0),
                         (-1, 0),
-                        colors.HexColor(
-                            "#0f172a"
-                        ),
+                        colors.HexColor("#0f172a"),
                     ),
                     (
                         "TEXTCOLOR",
@@ -671,7 +613,7 @@ def generate_report(request: ReportRequest):
 
         raise HTTPException(
             status_code=500,
-            detail=f"Could not generate PDF report: {error}"
+            detail=f"Could not generate PDF report: {error}",
         )
 
     return {
@@ -688,16 +630,18 @@ def generate_report(request: ReportRequest):
 @app.get("/reports/{filename}")
 def get_report(filename: str):
 
-    report_path = REPORT_DIR / filename
+    safe_filename = Path(filename).name
+    report_path = REPORT_DIR / safe_filename
 
     if not report_path.exists():
+
         raise HTTPException(
             status_code=404,
-            detail="Report not found."
+            detail="Report not found.",
         )
 
     return FileResponse(
         report_path,
         media_type="application/pdf",
-        filename=filename,
+        filename=safe_filename,
     )
