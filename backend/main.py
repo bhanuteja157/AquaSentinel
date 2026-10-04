@@ -736,3 +736,100 @@ def save_feedback(feedback: FeedbackRequest):
         "message": "Human feedback recorded successfully.",
         "record": saved_record,
     }
+# ============================================================
+# BATCH ANALYSIS
+# ============================================================
+
+@app.post("/analyze-batch")
+async def analyze_batch(files: list[UploadFile] = File(...)):
+    allowed_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".bmp",
+        ".tif",
+        ".tiff",
+    }
+
+    results = []
+
+    for file in files:
+        original_name = file.filename or "uploaded_image"
+        extension = Path(original_name).suffix.lower()
+
+        if extension not in allowed_extensions:
+            results.append({
+                "filename": original_name,
+                "status": "failed",
+                "error": "Unsupported image format.",
+            })
+            continue
+
+        file_id = uuid.uuid4().hex
+
+        input_filename = f"{file_id}{extension}"
+        input_path = UPLOAD_DIR / input_filename
+
+        annotated_filename = f"{file_id}.jpg"
+        annotated_path = DETECTION_DIR / annotated_filename
+
+        try:
+            with input_path.open("wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+
+            ingestion = ingestion_service.ingest(input_path)
+
+            detections = ai_service.analyze(
+                input_path=input_path,
+                annotated_path=annotated_path,
+            )
+
+            results.append({
+                "filename": original_name,
+                "status": "success",
+                "file_type": ingestion.file_type,
+                "metadata_status": ingestion.metadata_status,
+                "detections": detections,
+                "detection_count": len(detections),
+                "annotated_image": f"/outputs/{annotated_filename}",
+                "device": (
+                    torch.cuda.get_device_name(0)
+                    if torch.cuda.is_available()
+                    else "CPU"
+                ),
+            })
+
+        except (FileNotFoundError, ValueError) as error:
+            if input_path.exists():
+                input_path.unlink()
+
+            results.append({
+                "filename": original_name,
+                "status": "failed",
+                "error": str(error),
+            })
+
+        except Exception as error:
+            if input_path.exists():
+                input_path.unlink()
+
+            results.append({
+                "filename": original_name,
+                "status": "failed",
+                "error": f"AI inference failed: {error}",
+            })
+
+    successful = sum(
+        1 for result in results
+        if result["status"] == "success"
+    )
+
+    failed = len(results) - successful
+
+    return {
+        "status": "success",
+        "total_files": len(files),
+        "successful_files": successful,
+        "failed_files": failed,
+        "results": results,
+    }

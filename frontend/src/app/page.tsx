@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 
 
@@ -51,6 +51,7 @@ import dynamic from "next/dynamic";
 
 
 import AIHumanFeedback from "../components/AIHumanFeedback";
+import BatchAnalysis from "../components/BatchAnalysis";
 
 
 
@@ -2393,7 +2394,7 @@ setMissionHistory((prev) => [historyItem, ...prev].slice(0, 10));
 
 
 
-          "Strong AI detection — prioritize human assessment.",
+          "Strong AI detection â€” prioritize human assessment.",
 
 
 
@@ -2553,7 +2554,7 @@ setMissionHistory((prev) => [historyItem, ...prev].slice(0, 10));
 
 
 
-          "Moderate AI confidence — human review recommended.",
+          "Moderate AI confidence â€” human review recommended.",
 
 
 
@@ -2697,7 +2698,7 @@ setMissionHistory((prev) => [historyItem, ...prev].slice(0, 10));
 
 
 
-        "Low AI confidence — additional review recommended.",
+        "Low AI confidence â€” additional review recommended.",
 
 
 
@@ -5209,7 +5210,7 @@ return (
 
 
 
-                🌊
+                ðŸŒŠ
 
 
 
@@ -6329,7 +6330,7 @@ return (
 
 
 
-                    📡
+                    ðŸ“¡
 
 
 
@@ -7489,7 +7490,7 @@ return (
 
 
 
-    ↓ Download Annotated Sonar
+    â†“ Download Annotated Sonar
 
 
 
@@ -7985,7 +7986,7 @@ return (
 
 
 
-                      ✓
+                      âœ“
 
 
 
@@ -12042,7 +12043,7 @@ return (
 
                   ? formatClassName(record.correctedClass)
 
-                  : "—"}
+                  : "â€”"}
 
               </p>
 
@@ -12460,7 +12461,7 @@ return (
 
 
 
-                    {formatClassName(detection.class)} •{" "}
+                    {formatClassName(detection.class)} â€¢{" "}
 
 
 
@@ -13364,7 +13365,7 @@ return (
 
 
 
-                      ✓ Report generated successfully.
+                      âœ“ Report generated successfully.
 
 
 
@@ -13436,7 +13437,7 @@ return (
 
 
 
-                      Open PDF Report →
+                      Open PDF Report â†’
 
 
 
@@ -13660,7 +13661,7 @@ return (
 
 
 
-        AquaSentinel • AI Marine Anomaly Detection Prototype
+        AquaSentinel â€¢ AI Marine Anomaly Detection Prototype
 
 
 
